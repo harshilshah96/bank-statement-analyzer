@@ -120,7 +120,9 @@ export default function StatementForm() {
          try {
              const errData = await response.json();
              errorMsg = errData.error || errorMsg;
-         } catch (_e) { /* Ignore if response is not JSON */ }
+         } catch (e) { 
+          console.error('Error submitting main form:', e);
+          }
          throw new Error(errorMsg);
        }
 
