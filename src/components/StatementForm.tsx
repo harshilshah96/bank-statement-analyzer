@@ -31,7 +31,7 @@ export default function StatementForm() {
     },
   });
 
-  const { fields, append, remove } = useFieldArray({
+  const { fields } = useFieldArray({
     control,
     name: 'keywords',
   });
@@ -120,7 +120,7 @@ export default function StatementForm() {
          try {
              const errData = await response.json();
              errorMsg = errData.error || errorMsg;
-         } catch (e) { /* Ignore if response is not JSON */ }
+         } catch (_e) { /* Ignore if response is not JSON */ }
          throw new Error(errorMsg);
        }
 

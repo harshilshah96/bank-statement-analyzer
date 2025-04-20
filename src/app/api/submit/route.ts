@@ -98,11 +98,9 @@ export async function POST(request: NextRequest) {
 
             // Assuming columns: Date[1], Particulars[2], Debit[3], Credit[4], Balance[5]
             // Adjust indices if your statement structure is different
-            const dateVal = inputRow.getCell(1).value; // Keep original date format if possible
             const particulars = getCellValueAsString(inputRow.getCell(2));
             const debit = getCellValueAsNumber(inputRow.getCell(3));
             const credit = getCellValueAsNumber(inputRow.getCell(4));
-            const balanceVal = inputRow.getCell(5).value; // Keep original balance format
 
             let details = 'Error Processing';
 
@@ -148,8 +146,8 @@ Determine the 'Details' category based *only* on the rules provided.`;
             }
 
             // Add row to output sheet
-            const originalRowValues: any[] = [];
-            inputRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            const originalRowValues: (string | number | Date | ExcelJS.CellValue)[] = [];
+            inputRow.eachCell({ includeEmpty: true }, (_cell, colNumber) => {
                  // Attempt to preserve original cell value types (date, number, string)
                  // inputRow.getCell(colNumber).value might be simpler if formatting isn't critical
                  if (colNumber === 1 || colNumber === 5) { // Date and Balance
