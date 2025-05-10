@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { openai } from '@ai-sdk/openai';
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import { generateText } from 'ai';
 
 // Ensure OPENAI_API_KEY is loaded (Vercel AI SDK reads it automatically)
 // You might need to configure environment variables differently depending on deployment
+
+// Create a custom DeepSeek provider instance
+const deepseekProvider = createDeepSeek({
+  apiKey: process.env.DEEPSEEK_API_KEY, // Or process.env.DEEPSEEK_API_KEY
+  // You can also add other configurations here, like baseURL
+});
 
 type KeywordPair = {
     keyword: string;
@@ -47,7 +53,10 @@ Your task is to determine the 'Details' category for a given transaction.
 Follow these rules precisely:
 1. Examine the 'Particulars (Comment)' of the transaction.
 2. Compare the 'Particulars (Comment)' semantically against the provided 'Keyword':'Value' pairs.
-3. If you find a 'Keyword' that is semantically similar or a close match to the 'Particulars (Comment)', return the corresponding 'Value' exactly as provided.
+3. If you find a 'Keyword' that is semantically similar or a close match to the 'Particulars (Comment)', even if you find a partial match between the 'Particulars (Comment)' and the 'Keyword', return the corresponding 'Value' exactly as provided.
+   a. Sometimes the 'Keyword' might be a partial match to the 'Particulars (Comment)', in that case, return the corresponding 'Value' exactly as provided.
+   b. Sometimes the 'Keyword' might be a name of a person, which might be a partial match mentioned as an abbreviation in the 'Particulars (Comment)', for example the 'Keyword' might be 'Rajesh Kumar', but the 'Particulars (Comment)' might include 'Rajesh K', in that case, you should return the corresponding 'Value' exactly as provided. The name might also be truncated, for example the keyword 'Rajesh Kumar' might be mentioned as 'Rajesh Kum' in the 'Particulars (Comment)', in that case, you should return the corresponding 'Value' exactly as provided.
+   d. When matching the 'Keyword' to the 'Particulars (Comment)', be smart and understand the context of the transaction. For example, the 'Keyword' might be 'Credit Interest', but the 'Particulars (Comment)' might be 'Credit Interest Capitalised', in that case, you should return the corresponding 'Value' exactly as provided.
 4. If no semantic match is found with any keyword:
    a. Check if 'Debit amount' is greater than 0. If yes, return 'Personal expense'.
    b. If 'Debit amount' is 0 or less, check if 'Credit amount' is greater than 0. If yes, return 'Business income'.
@@ -66,13 +75,12 @@ Determine the 'Details' category based *only* on the rules provided.`;
 
                 const { text } = await generateText({
                     // Pass the provider and model ID directly
-                    model: openai('gpt-4o-mini'),
+                    model: deepseekProvider('deepseek-chat'),
                     system: systemPrompt,
                     prompt: userPrompt,
                 });
                 
                 details = text.trim();
-                console.log(`Processing details: ${details}`);
 
             } catch (aiError) {
                 console.error(`AI processing error:`, aiError);

@@ -12,6 +12,11 @@ type FormValues = {
   keywords: KeywordPair[];
 };
 
+// Define a new type for the summary form
+type SummaryFormValues = {
+  processedStatementFile: FileList | null;
+};
+
 type ProcessedRow = {
   [key: string]: string | number | Date | null;
   details: string;
@@ -38,11 +43,22 @@ function getCellValueAsNumber(cell: ExcelJS.Cell | undefined | null): number {
   if (!cell || cell.value === null || cell.value === undefined) {
     return 0;
   }
+  // Attempt to convert various cell types to number
+  if (typeof cell.value === 'object' && cell.value !== null) {
+    if ('result' in cell.value && cell.value.result !== undefined) {
+      const num = Number(cell.value.result);
+      return isNaN(num) ? 0 : num;
+    }
+    if (cell.value instanceof Date) {
+        return 0; 
+    }
+  }
   const num = Number(cell.value);
   return isNaN(num) ? 0 : num;
 }
 
 export default function StatementForm() {
+  const [activeTab, setActiveTab] = useState<'process' | 'summary'>('process');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'success' | 'error' | 'processing' | null>(null);
   const [submitMessage, setSubmitMessage] = useState<string>('');
@@ -51,6 +67,10 @@ export default function StatementForm() {
   const [processedCount, setProcessedCount] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
   
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryStatus, setSummaryStatus] = useState<'success' | 'error' | 'processing' | null>(null);
+  const [summaryMessage, setSummaryMessage] = useState<string>('');
+
   const {
     register,
     control,
@@ -69,6 +89,18 @@ export default function StatementForm() {
   const { fields } = useFieldArray({
     control,
     name: 'keywords',
+  });
+
+  // New form hook for the Summary tab
+  const {
+    register: registerSummary,
+    handleSubmit: handleSubmitSummary,
+    formState: { errors: summaryErrors },
+    reset: resetSummary,
+  } = useForm<SummaryFormValues>({
+    defaultValues: {
+      processedStatementFile: null,
+    },
   });
 
   const handleKeywordsFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -300,149 +332,268 @@ export default function StatementForm() {
     }
   };
 
+  const onSummarySubmit: SubmitHandler<SummaryFormValues> = async (data) => {
+    if (!data.processedStatementFile || data.processedStatementFile.length === 0) {
+      alert('Please upload the processed statement file.');
+      return;
+    }
+
+    setIsSummarizing(true);
+    setSummaryStatus('processing');
+    setSummaryMessage('Generating summary...');
+
+    const formData = new FormData();
+    formData.append('processedStatementFile', data.processedStatementFile[0]);
+
+    try {
+      const response = await fetch('/api/summarise', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to generate summary: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = 'summary_statement.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setSummaryStatus('success');
+      setSummaryMessage('Summary generated successfully! Download has started.');
+      resetSummary();
+
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      setSummaryStatus('error');
+      setSummaryMessage(`Summary generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   return (
     <div className="space-y-6 p-4 max-w-4xl mx-auto">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 p-4 bg-gray-800 shadow-lg rounded-lg">
-        <div>
-          <label htmlFor="keywordsFile" className="block text-sm font-medium text-gray-300 mb-1">
-            1. Upload Keywords (Excel or CSV)
-          </label>
-          <input
-            id="keywordsFile"
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            {...register('keywordsFile', {
-              onChange: handleKeywordsFileChange
-              })}
-            className="block w-full text-sm text-gray-300
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-full file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-blue-700 file:text-white
-                      hover:file:bg-blue-600
-                      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-gray-800"
-          />
-          {errors.keywordsFile && <p className="mt-1 text-sm text-red-400">{errors.keywordsFile.message}</p>}
-        </div>
-
-        <div>
-          <h3 className="text-lg font-medium text-gray-100 mb-2">Keywords (from file)</h3>
-          <div className="max-h-60 overflow-y-auto pr-2">
-            {fields.map((item, index) => (
-              <div key={item.id} className="flex space-x-2 mb-2 items-center">
-                <div className="flex-1">
-                  <label htmlFor={`keywords.${index}.keyword`} className="sr-only">Keyword</label>
-                  <input
-                    id={`keywords.${index}.keyword`}
-                    {...register(`keywords.${index}.keyword`, { required: 'Keyword is required' })}
-                    placeholder="Keyword"
-                    className="mt-1 block w-full px-3 py-2 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-200 bg-gray-700 placeholder-gray-400"
-                  />
-                  {errors.keywords?.[index]?.keyword && <p className="mt-1 text-sm text-red-400">{errors.keywords[index]?.keyword?.message}</p>}
-                </div>
-                <div className="flex-1">
-                  <label htmlFor={`keywords.${index}.value`} className="sr-only">Value</label>
-                  <input
-                    id={`keywords.${index}.value`}
-                    {...register(`keywords.${index}.value`, { required: 'Value is required' })}
-                    placeholder="Value"
-                    className="mt-1 block w-full px-3 py-2 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-200 bg-gray-700 placeholder-gray-400"
-                  />
-                  {errors.keywords?.[index]?.value && <p className="mt-1 text-sm text-red-400">{errors.keywords[index]?.value?.message}</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="bankStatementFile" className="block text-sm font-medium text-gray-300 mb-1">
-            2. Upload Bank Statement (Excel or CSV)
-          </label>
-          <input
-            id="bankStatementFile"
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            {...register('bankStatementFile', { required: 'Bank statement file is required' })}
-            className="block w-full text-sm text-gray-300
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-full file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-green-700 file:text-white
-                      hover:file:bg-green-600
-                      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 focus:ring-offset-gray-800
-                      disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={fields.length <= 1 && !fields[0]?.keyword}
-          />
-          {errors.bankStatementFile && <p className="mt-1 text-sm text-red-400">{errors.bankStatementFile.message}</p>}
-          {fields.length <= 1 && !fields[0]?.keyword && <p className="mt-1 text-sm text-gray-500">Upload keywords file first.</p>}
-        </div>
-
-        <div>
+      {/* Tab Navigation */}
+      <div className="mb-4 border-b border-gray-700">
+        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
           <button
-            type="submit"
-            className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${isSubmitting ? 'bg-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-gray-800`}
-            disabled={isSubmitting}
+            onClick={() => setActiveTab('process')}
+            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm focus:outline-none ${
+              activeTab === 'process'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'
+            }`}
           >
-            {isSubmitting ? 'Processing...' : 'Process Statement & Download'}
+            Process Statement
           </button>
-          {submitStatus === 'success' && <p className="mt-2 text-sm text-green-400">{submitMessage}</p>}
-          {submitStatus === 'error' && <p className="mt-2 text-sm text-red-400">{submitMessage}</p>}
-          {submitStatus === 'processing' && (
-            <div className="mt-2">
-              <p className="text-sm text-blue-400">{submitMessage}</p>
-              <p className="text-xs text-gray-400">Processing row {processedCount} of {totalRows}</p>
-              <div className="w-full bg-gray-700 rounded-full h-2.5 mt-1">
-                <div
-                  className="bg-blue-600 h-2.5 rounded-full"
-                  style={{ width: `${totalRows ? (processedCount / totalRows) * 100 : 0}%` }}
-                ></div>
+          <button
+            onClick={() => setActiveTab('summary')}
+            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm focus:outline-none ${
+              activeTab === 'summary'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'
+            }`}
+          >
+            Summarise Statement
+          </button>
+        </nav>
+      </div>
+
+      {activeTab === 'process' && (
+        <>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 p-4 bg-gray-800 shadow-lg rounded-lg">
+            <div>
+              <label htmlFor="keywordsFile" className="block text-sm font-medium text-gray-300 mb-1">
+                1. Upload Keywords (Excel or CSV)
+              </label>
+              <input
+                id="keywordsFile"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                {...register('keywordsFile', {
+                  onChange: handleKeywordsFileChange
+                  })}
+                className="block w-full text-sm text-gray-300
+                          file:mr-4 file:py-2 file:px-4
+                          file:rounded-full file:border-0
+                          file:text-sm file:font-semibold
+                          file:bg-blue-700 file:text-white
+                          hover:file:bg-blue-600
+                          focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-gray-800"
+              />
+              {errors.keywordsFile && <p className="mt-1 text-sm text-red-400">{errors.keywordsFile.message}</p>}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-100 mb-2">Keywords (from file)</h3>
+              <div className="max-h-60 overflow-y-auto pr-2">
+                {fields.map((item, index) => (
+                  <div key={item.id} className="flex space-x-2 mb-2 items-center">
+                    <div className="flex-1">
+                      <label htmlFor={`keywords.${index}.keyword`} className="sr-only">Keyword</label>
+                      <input
+                        id={`keywords.${index}.keyword`}
+                        {...register(`keywords.${index}.keyword`, { required: 'Keyword is required' })}
+                        placeholder="Keyword"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-200 bg-gray-700 placeholder-gray-400"
+                      />
+                      {errors.keywords?.[index]?.keyword && <p className="mt-1 text-sm text-red-400">{errors.keywords[index]?.keyword?.message}</p>}
+                    </div>
+                    <div className="flex-1">
+                      <label htmlFor={`keywords.${index}.value`} className="sr-only">Value</label>
+                      <input
+                        id={`keywords.${index}.value`}
+                        {...register(`keywords.${index}.value`, { required: 'Value is required' })}
+                        placeholder="Value"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-200 bg-gray-700 placeholder-gray-400"
+                      />
+                      {errors.keywords?.[index]?.value && <p className="mt-1 text-sm text-red-400">{errors.keywords[index]?.value?.message}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="bankStatementFile" className="block text-sm font-medium text-gray-300 mb-1">
+                2. Upload Bank Statement (Excel or CSV)
+              </label>
+              <input
+                id="bankStatementFile"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                {...register('bankStatementFile', { required: 'Bank statement file is required' })}
+                className="block w-full text-sm text-gray-300
+                          file:mr-4 file:py-2 file:px-4
+                          file:rounded-full file:border-0
+                          file:text-sm file:font-semibold
+                          file:bg-green-700 file:text-white
+                          hover:file:bg-green-600
+                          focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 focus:ring-offset-gray-800
+                          disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={fields.length <= 1 && !fields[0]?.keyword}
+              />
+              {errors.bankStatementFile && <p className="mt-1 text-sm text-red-400">{errors.bankStatementFile.message}</p>}
+              {fields.length <= 1 && !fields[0]?.keyword && <p className="mt-1 text-sm text-gray-500">Upload keywords file first.</p>}
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${isSubmitting ? 'bg-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-gray-800`}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Processing...' : 'Process Statement & Download'}
+              </button>
+              {submitStatus === 'success' && <p className="mt-2 text-sm text-green-400">{submitMessage}</p>}
+              {submitStatus === 'error' && <p className="mt-2 text-sm text-red-400">{submitMessage}</p>}
+              {submitStatus === 'processing' && (
+                <div className="mt-2">
+                  <p className="text-sm text-blue-400">{submitMessage}</p>
+                  <p className="text-xs text-gray-400">Processing row {processedCount} of {totalRows}</p>
+                  <div className="w-full bg-gray-700 rounded-full h-2.5 mt-1">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full"
+                      style={{ width: `${totalRows ? (processedCount / totalRows) * 100 : 0}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </form>
+
+          {/* Results Table - only show for 'process' tab */}
+          {processedRows.length > 0 && (
+            <div className="mt-6 p-4 bg-gray-800 shadow-lg rounded-lg overflow-x-auto">
+              <h3 className="text-lg font-medium text-gray-100 mb-2">Processing Results</h3>
+              <div className="max-h-[400px] overflow-y-auto relative">
+                <table className="min-w-full divide-y divide-gray-700">
+                  <thead className="bg-gray-700 sticky top-0 z-10">
+                    <tr>
+                      {headers.map((header, index) => (
+                        <th 
+                          key={index} 
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider"
+                        >
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-gray-800 divide-y divide-gray-700">
+                    {processedRows.map((row, rowIndex) => (
+                      <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-gray-800' : 'bg-gray-750'}>
+                        {headers.map((header, colIndex) => (
+                          <td 
+                            key={`${rowIndex}-${colIndex}`} 
+                            className="px-6 py-4 whitespace-nowrap text-sm text-gray-300"
+                          >
+                            {header === 'Details' 
+                              ? row.details 
+                              : row[header] !== null && row[header] !== undefined 
+                                ? String(row[header]) 
+                                : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
-        </div>
-      </form>
+        </>
+      )}
 
-      {/* Results Table */}
-      {processedRows.length > 0 && (
-        <div className="mt-6 p-4 bg-gray-800 shadow-lg rounded-lg overflow-x-auto">
-          <h3 className="text-lg font-medium text-gray-100 mb-2">Processing Results</h3>
-          <div className="max-h-[400px] overflow-y-auto relative">
-            <table className="min-w-full divide-y divide-gray-700">
-              <thead className="bg-gray-700 sticky top-0 z-10">
-                <tr>
-                  {headers.map((header, index) => (
-                    <th 
-                      key={index} 
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider"
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="bg-gray-800 divide-y divide-gray-700">
-                {processedRows.map((row, rowIndex) => (
-                  <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-gray-800' : 'bg-gray-750'}>
-                    {headers.map((header, colIndex) => (
-                      <td 
-                        key={`${rowIndex}-${colIndex}`} 
-                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-300"
-                      >
-                        {header === 'Details' 
-                          ? row.details 
-                          : row[header] !== null && row[header] !== undefined 
-                            ? String(row[header]) 
-                            : ''}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {activeTab === 'summary' && (
+        <form onSubmit={handleSubmitSummary(onSummarySubmit)} className="space-y-6 p-4 bg-gray-800 shadow-lg rounded-lg">
+          <div>
+            <label htmlFor="processedStatementFile" className="block text-sm font-medium text-gray-300 mb-1">
+              Upload Processed Statement (Excel .xlsx only)
+            </label>
+            <input
+              id="processedStatementFile"
+              type="file"
+              accept=".xlsx" // Enforce .xlsx for summary
+              {...registerSummary('processedStatementFile', { required: 'Processed statement file is required' })}
+              className="block w-full text-sm text-gray-300
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-purple-700 file:text-white
+                        hover:file:bg-purple-600
+                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 focus:ring-offset-gray-800"
+            />
+            {summaryErrors.processedStatementFile && <p className="mt-1 text-sm text-red-400">{summaryErrors.processedStatementFile.message}</p>}
           </div>
-        </div>
+          <div>
+            <button
+              type="submit"
+              className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${isSummarizing ? 'bg-gray-600 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 focus:ring-offset-gray-800`}
+              disabled={isSummarizing}
+            >
+              {isSummarizing ? 'Generating Summary...' : 'Generate Summary & Download'}
+            </button>
+            {summaryStatus === 'success' && <p className="mt-2 text-sm text-green-400">{summaryMessage}</p>}
+            {summaryStatus === 'error' && <p className="mt-2 text-sm text-red-400">{summaryMessage}</p>}
+            {summaryStatus === 'processing' && (
+              <div className="mt-2">
+                <p className="text-sm text-blue-400">{summaryMessage}</p>
+                {/* You can add a simple loading spinner or text here if desired */}
+              </div>
+            )}
+          </div>
+        </form>
       )}
     </div>
   );
-} 
+}
